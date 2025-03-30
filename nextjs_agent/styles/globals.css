@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply bg-gradient-to-br from-gray-50 to-gray-100 min-h-screen text-secondary-800 font-sans;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-medium text-secondary-900;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-white bg-opacity-70 backdrop-blur-lg rounded-2xl shadow-glass border border-white border-opacity-20;
+  }
+
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-1;
+  }
+
+  .btn-primary {
+    @apply btn bg-primary-500 text-white hover:bg-primary-600 focus:ring-primary-500;
+  }
+
+  .btn-secondary {
+    @apply btn bg-secondary-100 text-secondary-700 hover:bg-secondary-200 focus:ring-secondary-300;
+  }
+
+  .btn-accent {
+    @apply btn bg-accent text-white hover:bg-accent-dark focus:ring-accent;
+  }
+
+  .input {
+    @apply w-full px-4 py-3 rounded-xl border border-secondary-200 focus:ring-2 focus:ring-primary-300 focus:border-primary-300 focus:outline-none transition duration-200 bg-white bg-opacity-80 backdrop-blur-sm;
+  }
+}
