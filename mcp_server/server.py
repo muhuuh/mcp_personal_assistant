@@ -7,13 +7,15 @@ load_dotenv()
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
+import io
 
 app = FastAPI()
 
 SCOPES = [
-  'https://www.googleapis.com/auth/drive.metadata.readonly',
-  'https://www.googleapis.com/auth/drive.file'
+  'https://www.googleapis.com/auth/drive'
 ]
+
 
 CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS_PATH", "credentials.json")
 
@@ -30,6 +32,14 @@ def get_drive_service():
         with open("token.json", "w") as token:
             token.write(creds.to_json())
     return build("drive", "v3", credentials=creds)
+
+def get_drive_file_id_by_name(service, name, parent_folder_id=None):
+    query = f"name = '{name}'"
+    if parent_folder_id:
+        query += f" and '{parent_folder_id}' in parents"
+    results = service.files().list(q=query, spaces='drive', fields="files(id, name)", pageSize=1).execute()
+    files = results.get("files", [])
+    return files[0]["id"] if files else None
 
 
 @app.get("/schema")
@@ -66,11 +76,52 @@ def get_schema():
             },
             {
                 "name": "list_drive_files",
-                "description": "List file names from your Google Drive (top 10 files)",
+                "description": "List file names from your Google Drive (by folder name)",
                 "parameters": {
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "folder_name": {
+                            "type": "string",
+                            "description": "The name of the folder to list files from"
+                        }
+                    },
                     "required": []
+                }
+            },
+            {
+                "name": "read_drive_file",
+                "description": "Read the content of a Google Drive file (by file name)",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_name": {
+                            "type": "string",
+                            "description": "The name of the file to read"
+                        },
+                        "folder_name": {
+                            "type": "string",
+                            "description": "Optional folder to limit file lookup"
+                        }
+                    },
+                    "required": ["file_name"]
+                }
+            },
+            {
+                "name": "upload_drive_file",
+                "description": "Upload a local file to Google Drive",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Path to the local file"
+                        },
+                        "drive_filename": {
+                            "type": "string",
+                            "description": "The name to give the file on Google Drive"
+                        }
+                    },
+                    "required": ["file_path", "drive_filename"]
                 }
             }
         ]
@@ -82,6 +133,8 @@ class InvokeRequest(BaseModel):
 
 @app.post("/invoke")
 def invoke_tool(req: InvokeRequest):
+    service = get_drive_service()
+
     if req.tool == "list_files":
         try:
             return {"output": os.listdir(req.input["directory"])}
@@ -98,11 +151,54 @@ def invoke_tool(req: InvokeRequest):
 
     elif req.tool == "list_drive_files":
         try:
-            service = get_drive_service()
-            results = service.files().list(pageSize=10).execute()
+            folder_name = req.input.get("folder_name")
+            folder_id = get_drive_file_id_by_name(service, folder_name) if folder_name else None
+            query = f"'{folder_id}' in parents" if folder_id else None
+            results = service.files().list(q=query, pageSize=10, fields="files(id, name)").execute()
             files = results.get("files", [])
-            return {"output": [f["name"] for f in files]}
+            return {"output": [{"id": f["id"], "name": f["name"]} for f in files]}
+        except Exception as e:
+            return {"error": str(e)}
+    elif req.tool == "read_drive_file":
+        try:
+            file_name = req.input["file_name"]
+            folder_name = req.input.get("folder_name")
+            folder_id = get_drive_file_id_by_name(service, folder_name) if folder_name else None
+            file_id = get_drive_file_id_by_name(service, file_name, parent_folder_id=folder_id)
+            if not file_id:
+                return {"error": f"File '{file_name}' not found."}
+
+            # Get file metadata to check if it's a Google Doc
+            file_metadata = service.files().get(fileId=file_id, fields="mimeType").execute()
+            mime_type = file_metadata["mimeType"]
+
+            if mime_type == "application/vnd.google-apps.document":
+                # Export Google Docs as plain text
+                request = service.files().export_media(fileId=file_id, mimeType="text/plain")
+            else:
+                # Download normal files
+                request = service.files().get_media(fileId=file_id)
+
+            fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            fh.seek(0)
+            content = fh.read().decode("utf-8")
+
+            return {"output": content}
         except Exception as e:
             return {"error": str(e)}
 
+    elif req.tool == "upload_drive_file":
+        try:
+            file_path = req.input["file_path"]
+            drive_filename = req.input["drive_filename"]
+            media = MediaFileUpload(file_path, resumable=True)
+            file_metadata = {"name": drive_filename}
+            file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+            return {"output": f"Uploaded successfully with ID: {file['id']}"}
+        except Exception as e:
+            return {"error": str(e)}
     return {"error": "Unknown tool"}

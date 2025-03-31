@@ -99,11 +99,59 @@ export default async function handler(
         type: "function",
         function: {
           name: "list_drive_files",
-          description: "List file names from your Google Drive (top 10 files)",
+          description:
+            "List file names from your Google Drive (by folder name)",
           parameters: {
             type: "object",
-            properties: {},
+            properties: {
+              folder_name: {
+                type: "string",
+                description: "The name of the folder to list files from",
+              },
+            },
             required: [],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "read_drive_file",
+          description: "Read the content of a Google Drive file (by file name)",
+          parameters: {
+            type: "object",
+            properties: {
+              file_name: {
+                type: "string",
+                description: "Name of the file to read",
+              },
+              folder_name: {
+                type: "string",
+                description: "Optional folder to limit file lookup",
+              },
+            },
+            required: ["file_name"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "upload_drive_file",
+          description: "Upload a local file to Google Drive",
+          parameters: {
+            type: "object",
+            properties: {
+              file_path: {
+                type: "string",
+                description: "Path to the file to upload",
+              },
+              drive_filename: {
+                type: "string",
+                description: "The name to give the file on Google Drive",
+              },
+            },
+            required: ["file_path", "drive_filename"],
           },
         },
       },
