@@ -95,6 +95,18 @@ export default async function handler(
           },
         },
       },
+      {
+        type: "function",
+        function: {
+          name: "list_drive_files",
+          description: "List file names from your Google Drive (top 10 files)",
+          parameters: {
+            type: "object",
+            properties: {},
+            required: [],
+          },
+        },
+      },
     ];
 
     console.log("Sending request to OpenRouter with message:", userMessage);
