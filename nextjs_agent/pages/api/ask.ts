@@ -12,6 +12,13 @@ const openai = new OpenAI({
   },
 });
 
+// Temp session memory (in-memory, clears on restart)
+const sessionMemory: {
+  messages: any[];
+} = {
+  messages: [],
+};
+
 // Function to call the MCP server
 // Corrected function to call the MCP HTTP server
 async function callMcpTool(toolName: string, params: any) {
@@ -61,6 +68,9 @@ export default async function handler(
     if (!userMessage) {
       return res.status(400).json({ error: "Message is required" });
     }
+
+    // Add the user message to memory
+    sessionMemory.messages.push({ role: "user", content: userMessage });
 
     // Define the MCP function schema as tools
     const tools: ChatCompletionTool[] = [
@@ -175,21 +185,27 @@ export default async function handler(
       {
         type: "function",
         function: {
-          name: "read_emails_by_sender",
-          description: "Read the latest emails from a specific sender.",
+          name: "read_emails",
+          description:
+            "Read emails with optional filters like sender, max count, or how recent.",
           parameters: {
             type: "object",
             properties: {
               sender: {
                 type: "string",
-                description: "Email address of the sender",
+                description: "Email address of the sender (optional)",
               },
               max_results: {
                 type: "integer",
-                description: "Maximum number of emails to fetch",
+                description: "Maximum number of emails to return (optional)",
+              },
+              since_days: {
+                type: "integer",
+                description:
+                  "Number of days ago to filter emails from (optional)",
               },
             },
-            required: ["sender"],
+            required: [],
           },
         },
       },
@@ -197,7 +213,8 @@ export default async function handler(
         type: "function",
         function: {
           name: "send_email",
-          description: "Send an email to a specific recipient.",
+          description:
+            "Send an email to a specific recipient. In case no subject line is giving, write the best fitting one",
           parameters: {
             type: "object",
             properties: {
@@ -216,60 +233,55 @@ export default async function handler(
 
     console.log("Sending request to OpenRouter with message:", userMessage);
 
-    // Using a model that's available on OpenRouter and supports function calling
-    const completion = await openai.chat.completions.create({
-      model: "google/gemini-2.0-flash-001",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You're a helpful assistant. You have access to the following tools: 'list_files' (takes a 'directory'), and 'read_file' (takes a 'file_path'). Use these tools via function calls when the user asks about files or folders.",
-        },
-        { role: "user", content: userMessage },
-      ],
-      tools: tools,
-      tool_choice: "auto",
-    });
+    // Main interaction loop with tool call support
+    let done = false;
+    let finalResponse = null;
 
-    const msg = completion.choices[0].message;
-    console.log("OpenRouter response:", msg);
-
-    // Handle tool calls (previously function_call)
-    if (msg.tool_calls && msg.tool_calls.length > 0) {
-      const toolCall = msg.tool_calls[0];
-      const fn = toolCall.function.name;
-      const args = JSON.parse(toolCall.function.arguments || "{}");
-      console.log(`Tool call detected: ${fn} with args:`, args);
-
-      // Call the MCP server instead of directly accessing files
-      const result = await callMcpTool(fn, args);
-
-      // Send tool result back to LLM for final response
-      const secondCall = await openai.chat.completions.create({
+    while (!done) {
+      const response = await openai.chat.completions.create({
         model: "google/gemini-2.0-flash-001",
         messages: [
           {
             role: "system",
             content:
-              "You're a helpful assistant. You have access to the following tools: 'list_files' (takes a 'directory'), and 'read_file' (takes a 'file_path'). Use these tools when the user asks about files or folders.",
+              "You're a helpful AI agent connected to various tools via MCP.",
           },
-          { role: "user", content: userMessage },
-          msg,
-          {
-            role: "tool",
-            tool_call_id: toolCall.id,
-            content: JSON.stringify(result),
-          },
+          ...sessionMemory.messages,
         ],
-        tools: tools,
+        tools,
+        tool_choice: "auto",
       });
 
-      return res
-        .status(200)
-        .json({ response: secondCall.choices[0].message.content });
+      const msg = response.choices[0].message;
+
+      // If it's a normal message — end the loop
+      if (!msg.tool_calls || msg.tool_calls.length === 0) {
+        sessionMemory.messages.push(msg);
+        finalResponse = msg.content;
+        done = true;
+        break;
+      }
+
+      // If there's a tool call, resolve it and loop again
+      for (const toolCall of msg.tool_calls) {
+        const fn = toolCall.function.name;
+        const args = JSON.parse(toolCall.function.arguments || "{}");
+        const result = await callMcpTool(fn, args);
+
+        // Save both tool call and result in memory
+        sessionMemory.messages.push({
+          role: "assistant",
+          tool_calls: [toolCall],
+        });
+        sessionMemory.messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(result),
+        });
+      }
     }
 
-    return res.status(200).json({ response: msg.content });
+    return res.status(200).json({ response: finalResponse });
   } catch (error: any) {
     console.error("Error in API route:", error);
     return res.status(500).json({ error: error.message || String(error) });

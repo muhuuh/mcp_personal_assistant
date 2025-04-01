@@ -148,21 +148,25 @@ def get_schema():
                 }
             },
             {
-                "name": "read_emails_by_sender",
-                "description": "Read the latest emails from a specific sender.",
+                "name": "read_emails",
+                "description": "Read emails with optional filters like sender, max count, or how recent.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "sender": {
-                            "type": "string",
-                            "description": "Email address of the sender"
-                        },
-                        "max_results": {
-                            "type": "integer",
-                            "description": "Maximum number of emails to fetch"
-                        }
+                    "sender": {
+                        "type": "string",
+                        "description": "Email address of the sender (optional)"
                     },
-                    "required": ["sender"]
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of emails to return (optional)"
+                    },
+                    "since_days": {
+                        "type": "integer",
+                        "description": "Number of days ago to filter emails from (optional)"
+                    }
+                    },
+                    "required": []
                 }
             },
             {
@@ -275,12 +279,25 @@ def invoke_tool(req: InvokeRequest):
         except Exception as e:
             return {"error": str(e)}
 
-    elif req.tool == "read_emails_by_sender":
+    elif req.tool == "read_emails":
         try:
             gmail = get_gmail_service()
-            sender = req.input["sender"]
-            max_results = req.input.get("max_results", 3)
-            results = gmail.users().messages().list(userId="me", q=f"from:{sender}", maxResults=max_results).execute()
+            sender = req.input.get("sender")
+            max_results = req.input.get("max_results", 5)
+            since_days = req.input.get("since_days")
+
+            # Build query string
+            query_parts = []
+            if sender:
+                query_parts.append(f"from:{sender}")
+            if since_days:
+                from datetime import datetime, timedelta
+                since = (datetime.utcnow() - timedelta(days=since_days)).strftime("%Y/%m/%d")
+                query_parts.append(f"after:{since}")
+            query = " ".join(query_parts)
+
+            # Fetch messages
+            results = gmail.users().messages().list(userId="me", q=query, maxResults=max_results).execute()
             messages = results.get("messages", [])
 
             emails = []
