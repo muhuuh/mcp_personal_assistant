@@ -10,16 +10,25 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 import io
 
+import base64
+from email.mime.text import MIMEText
+from datetime import datetime
+
 app = FastAPI()
 
 SCOPES = [
-  'https://www.googleapis.com/auth/drive'
+  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.send'
 ]
-
 
 CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS_PATH", "credentials.json")
 
-
+def get_gmail_service():
+    creds = None
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    return build("gmail", "v1", credentials=creds)
 
 # 🧠 Get authorized Google Drive service
 def get_drive_service():
@@ -123,6 +132,51 @@ def get_schema():
                     },
                     "required": ["file_path", "drive_filename"]
                 }
+            },
+            {
+                "name": "list_recent_emails",
+                "description": "List recent emails with sender, subject, and time.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Number of recent emails to retrieve"
+                        }
+                    },
+                    "required": []
+                }
+            },
+            {
+                "name": "read_emails_by_sender",
+                "description": "Read the latest emails from a specific sender.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "sender": {
+                            "type": "string",
+                            "description": "Email address of the sender"
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Maximum number of emails to fetch"
+                        }
+                    },
+                    "required": ["sender"]
+                }
+            },
+            {
+                "name": "send_email",
+                "description": "Send an email to a specific recipient.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "to": {"type": "string", "description": "Recipient email address"},
+                        "subject": {"type": "string", "description": "Subject of the email"},
+                        "body": {"type": "string", "description": "Plain text body of the email"}
+                    },
+                    "required": ["to", "subject", "body"]
+                }
             }
         ]
     }
@@ -199,6 +253,65 @@ def invoke_tool(req: InvokeRequest):
             file_metadata = {"name": drive_filename}
             file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
             return {"output": f"Uploaded successfully with ID: {file['id']}"}
+        except Exception as e:
+            return {"error": str(e)}
+    elif req.tool == "list_recent_emails":
+        try:
+            gmail = get_gmail_service()
+            max_results = req.input.get("max_results", 5)
+            results = gmail.users().messages().list(userId="me", maxResults=max_results).execute()
+            messages = results.get("messages", [])
+
+            output = []
+            for msg in messages:
+                msg_data = gmail.users().messages().get(userId="me", id=msg["id"], format="metadata", metadataHeaders=["From", "Subject", "Date"]).execute()
+                headers = {h["name"]: h["value"] for h in msg_data["payload"]["headers"]}
+                output.append({
+                    "from": headers.get("From"),
+                    "subject": headers.get("Subject"),
+                    "date": headers.get("Date")
+                })
+            return {"output": output}
+        except Exception as e:
+            return {"error": str(e)}
+
+    elif req.tool == "read_emails_by_sender":
+        try:
+            gmail = get_gmail_service()
+            sender = req.input["sender"]
+            max_results = req.input.get("max_results", 3)
+            results = gmail.users().messages().list(userId="me", q=f"from:{sender}", maxResults=max_results).execute()
+            messages = results.get("messages", [])
+
+            emails = []
+            for msg in messages:
+                msg_data = gmail.users().messages().get(userId="me", id=msg["id"], format="full").execute()
+                snippet = msg_data.get("snippet", "")
+                headers = {h["name"]: h["value"] for h in msg_data["payload"]["headers"]}
+                emails.append({
+                    "from": headers.get("From"),
+                    "subject": headers.get("Subject"),
+                    "date": headers.get("Date"),
+                    "snippet": snippet
+                })
+            return {"output": emails}
+        except Exception as e:
+            return {"error": str(e)}
+
+    elif req.tool == "send_email":
+        try:
+            gmail = get_gmail_service()
+            to = req.input["to"]
+            subject = req.input["subject"]
+            body = req.input["body"]
+
+            message = MIMEText(body)
+            message["to"] = to
+            message["subject"] = subject
+
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+            gmail.users().messages().send(userId="me", body={"raw": raw_message}).execute()
+            return {"output": "Email sent successfully."}
         except Exception as e:
             return {"error": str(e)}
     return {"error": "Unknown tool"}

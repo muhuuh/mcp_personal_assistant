@@ -155,6 +155,63 @@ export default async function handler(
           },
         },
       },
+      {
+        type: "function",
+        function: {
+          name: "list_recent_emails",
+          description: "List recent emails with sender, subject, and time.",
+          parameters: {
+            type: "object",
+            properties: {
+              max_results: {
+                type: "integer",
+                description: "Number of emails to retrieve",
+              },
+            },
+            required: ["max_results"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "read_emails_by_sender",
+          description: "Read the latest emails from a specific sender.",
+          parameters: {
+            type: "object",
+            properties: {
+              sender: {
+                type: "string",
+                description: "Email address of the sender",
+              },
+              max_results: {
+                type: "integer",
+                description: "Maximum number of emails to fetch",
+              },
+            },
+            required: ["sender"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "send_email",
+          description: "Send an email to a specific recipient.",
+          parameters: {
+            type: "object",
+            properties: {
+              to: { type: "string", description: "Recipient email address" },
+              subject: { type: "string", description: "Subject of the email" },
+              body: {
+                type: "string",
+                description: "Plain text body of the email",
+              },
+            },
+            required: ["to", "subject", "body"],
+          },
+        },
+      },
     ];
 
     console.log("Sending request to OpenRouter with message:", userMessage);
